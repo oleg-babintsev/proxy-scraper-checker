@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from .proxy_scraper_checker import ProxyScraperChecker
+from . import proxy
 
 
 def set_event_loop_policy() -> None:
@@ -28,7 +29,7 @@ def set_event_loop_policy() -> None:
 
 
 def configure_logging(console: Console, *, debug: bool) -> None:
-    rich.traceback.install(console=console)
+    # rich.traceback.install(console=console)
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
         format="%(message)s",
@@ -45,16 +46,24 @@ def configure_logging(console: Console, *, debug: bool) -> None:
 
 
 def get_config(file: str) -> ConfigParser:
+    print("Config:", file)
     cfg = ConfigParser(interpolation=None)
     cfg.read(file, encoding="utf-8")
     return cfg
 
 
 async def main() -> None:
-    cfg = get_config("config.ini")
+    config_file = "config.ini"
+    if len(sys.argv) > 1:
+        config_file = f"config_{sys.argv[1]}.ini"
+    cfg = get_config(config_file)
 
     console = Console()
     configure_logging(console, debug=cfg["General"].getboolean("Debug", False))
+
+    general = cfg["General"]
+    proxy.STOP_LOCATIONS = tuple([v.strip() for v in (general.get("StopLocations") or "").splitlines() if v])
+    proxy.BINGO_LOCATIONS = tuple([v.strip() for v in (general.get("BingoLocations") or "").splitlines() if v])
 
     await ProxyScraperChecker.from_configparser(cfg, console=console).run()
 

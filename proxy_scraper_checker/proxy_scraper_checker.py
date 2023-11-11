@@ -19,9 +19,12 @@ from typing import (
     TypeVar,
     Union,
 )
+from urllib.parse import urlparse
+from datetime import datetime
+
 
 from aiohttp import ClientSession, ClientTimeout, DummyCookieJar
-from aiohttp_socks import ProxyType
+from aiohttp_socks import ProxyType, ProxyInfo
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -44,6 +47,7 @@ TProxyScraperChecker = TypeVar(
 )
 
 
+# noinspection PyAttributeOutsideInit
 class ProxyScraperChecker:
     """HTTP, SOCKS4, SOCKS5 proxies scraper and checker."""
 
@@ -61,6 +65,7 @@ class ProxyScraperChecker:
         "source_timeout",
         "sources",
         "timeout",
+        "tunnels",
     )
 
     def __init__(
@@ -68,11 +73,15 @@ class ProxyScraperChecker:
         *,
         timeout: float,
         source_timeout: float,
+        max_tunnels: int,
         max_connections: int,
         check_website: str,
         sort_by_speed: bool,
         save_path: Path,
         folders: Iterable[Folder],
+        tunnels: Optional[Iterable[str]],
+        tunnels_def_user: Optional[str],
+        tunnels_def_pass: Optional[str],
         sources: Dict[ProxyType, Optional[str]],
         console: Optional[Console] = None,
     ) -> None:
@@ -116,6 +125,22 @@ class ProxyScraperChecker:
         self.sort_by_speed = sort_by_speed
         self.path = save_path
         self.folders = folders
+
+        self.tunnels = []
+        if tunnels:
+            self.sem: Union[asyncio.Semaphore, AsyncNullContext] = (
+                asyncio.Semaphore(max_tunnels) if max_tunnels else AsyncNullContext()
+            )
+            for tunnel in tunnels:
+                url = urlparse(tunnel)
+                self.tunnels.append((
+                    ProxyInfo(proxy_type=ProxyType[url.scheme.upper()],
+                              host=url.hostname, port=url.port,
+                              username=url.username or tunnels_def_user,
+                              password=url.password or tunnels_def_pass),
+                    asyncio.Semaphore(max_conn),
+                ))
+            shuffle(self.tunnels)
 
         if self.check_website != "default":
             validators.check_website(check_website)
@@ -164,6 +189,7 @@ class ProxyScraperChecker:
     ) -> TProxyScraperChecker:
         general = cfg["General"]
         folders = cfg["Folders"]
+        tunnels = cfg["TUNNELS"]
         http = cfg["HTTP"]
         socks4 = cfg["SOCKS4"]
         socks5 = cfg["SOCKS5"]
@@ -171,6 +197,7 @@ class ProxyScraperChecker:
         return cls(
             timeout=general.getfloat("Timeout", 5),
             source_timeout=general.getfloat("SourceTimeout", 15),
+            max_tunnels=general.getint("MaxTunnels", 1),
             max_connections=general.getint("MaxConnections", 512),
             check_website=general.get("CheckWebsite", "default"),
             sort_by_speed=general.getboolean("SortBySpeed", True),
@@ -203,6 +230,9 @@ class ProxyScraperChecker:
                     for_geolocation=True,
                 ),
             ),
+            tunnels=tunnels.get("Addresses").strip().splitlines() if tunnels.getboolean("Enabled", True) else [],
+            tunnels_def_user=tunnels.get("DefaultUser") if tunnels.getboolean("Enabled", True) else None,
+            tunnels_def_pass=tunnels.get("DefaultPassword") if tunnels.getboolean("Enabled", True) else None,
             sources={
                 ProxyType.HTTP: (
                     http.get("Sources")
@@ -237,10 +267,30 @@ class ProxyScraperChecker:
         Args:
             source: Proxy list URL.
         """
+        check_mode = False
         try:
-            async with session.get(source) as response:
-                await response.read()
-            text = await response.text()
+            print(source)
+            if source.startswith('host:'):
+                text = ''
+                host_parts = source.split(':')
+                print(host_parts)
+                port_from = int(host_parts[2]) if len(host_parts) > 2 else 1000
+                port_to = int(host_parts[3]) if len(host_parts) > 3 else (port_from + 1 if port_from > 1000 else 65535)
+                if port_to == port_from:
+                    port_to += 1
+                for i in range(port_from, port_to):
+                    text += f'{host_parts[1]}:{i}\n'
+            elif source.startswith('check:'):
+                text = ''
+                host_parts = source.split(':')
+                print(host_parts)
+                for i in range(1, len(self.tunnels)):
+                    text += f'{host_parts[1]}:{host_parts[2]}\n'
+                check_mode = True
+            else:
+                async with session.get(source) as response:
+                    await response.read()
+                text = await response.text()
         except asyncio.TimeoutError:
             logger.warning("%s | Timed out", source)
         except Exception as e:
@@ -274,13 +324,26 @@ class ProxyScraperChecker:
                 )
                 logger.warning(*args)
             else:
+                tunnel_qty = len(self.tunnels)
+                tunnel_index = 0
+
+                tunnel = None
+                if tunnel_qty > 0:
+                    tunnel = self.tunnels[tunnel_index]
+                    tunnel_index = tunnel_index + 1 if tunnel_index < tunnel_qty - 1 else 0
+
                 proxies_set = self.proxies[proto]
                 proxies_set.add(
-                    Proxy(host=proxy.group(1), port=int(proxy.group(2)))
+                    Proxy(host=proxy.group(1), port=int(proxy.group(2)), tunnel=tunnel, check_mode=check_mode)
                 )
+
                 for proxy in proxies:
+                    tunnel = None
+                    if tunnel_qty > 0:
+                        tunnel = self.tunnels[tunnel_index]
+                        tunnel_index = tunnel_index + 1 if tunnel_index < tunnel_qty - 1 else 0
                     proxies_set.add(
-                        Proxy(host=proxy.group(1), port=int(proxy.group(2)))
+                        Proxy(host=proxy.group(1), port=int(proxy.group(2)), tunnel=tunnel, check_mode=check_mode)
                     )
         progress.update(task, advance=1)
 
@@ -301,6 +364,8 @@ class ProxyScraperChecker:
                 proto=proto,
                 timeout=self.timeout,
             )
+        except ValueError as e:
+            raise e
         except Exception as e:
             # Too many open files
             if isinstance(e, OSError) and e.errno == 24:  # noqa: PLR2004
@@ -386,6 +451,8 @@ class ProxyScraperChecker:
         )
 
     async def run(self) -> None:
+        start_time = datetime.now()
+        print(start_time)
         with self._get_progress_bar() as progress:
             await self.fetch_all_sources(progress)
             await self.check_all_proxies(progress)
@@ -394,6 +461,9 @@ class ProxyScraperChecker:
         self.console.print(table)
 
         self.save_proxies()
+
+        end_time = datetime.now()
+        logger.info('Elapsed time: %s', end_time - start_time)
 
         logger.info(
             "Thank you for using "
