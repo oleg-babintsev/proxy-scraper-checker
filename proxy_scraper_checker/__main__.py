@@ -53,10 +53,11 @@ def get_config(file: str) -> ConfigParser:
 
 
 async def main() -> None:
+    path = "../proxy-scraper-checker-configs"
     config_file = "config.ini"
     if len(sys.argv) > 1:
         config_file = f"config_{sys.argv[1]}.ini"
-    cfg = get_config(config_file)
+    cfg = get_config(f"{path}/{config_file}")
 
     console = Console()
     configure_logging(console, debug=cfg["General"].getboolean("Debug", False))
