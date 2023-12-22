@@ -470,7 +470,7 @@ class ProxyScraperChecker:
         table = self._get_results_table()
         self.console.print(table)
 
-        self.save_proxies()
+        # self.save_proxies()
 
         end_time = datetime.now()
         logger.info('Elapsed time: %s', end_time - start_time)
