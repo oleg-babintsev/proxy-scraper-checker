@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from time import perf_counter
 from types import MappingProxyType
@@ -11,6 +12,8 @@ from aiohttp.abc import AbstractCookieJar
 from aiohttp_socks import ChainProxyConnector, ProxyType, ProxyInfo
 
 from .null_context import AsyncNullContext
+
+logger = logging.getLogger(__name__)
 
 # noinspection HttpUrlsUsage
 DEFAULT_CHECK_WEBSITE = "http://ip-api.com/json/?fields=8217"
@@ -65,6 +68,10 @@ class Proxy:
             async with sem_within_tunnel:
                 # print(chain)
                 # print(self.port)
+                logger.debug(
+                    f'CHAIN: {proto.name.lower()}://{self.tunnel[0].host}:{self.tunnel[0].port} '
+                    f'-> {self.host}:{self.port}'
+                )
                 async with ClientSession(
                     connector=connector,
                     cookie_jar=cookie_jar,
@@ -83,18 +90,19 @@ class Proxy:
                 data["country"], data["regionName"], data["city"], data["query"]
             )
             if self.check_mode:
-                print(f'{proto.name.lower()}://{self.tunnel[0].host}:{self.tunnel[0].port}')
+                logger.info(f'{proto.name.lower()}://{self.tunnel[0].host}:{self.tunnel[0].port}')
                 return
             name_str = self.as_str(include_geolocation=True)
             # bingo locations
             if any(v in name_str for v in BINGO_LOCATIONS):
-                print('---------- BINGO!!! ----------')
-                print(f'PROXY({proto.name}): {name_str}')
-                print('------------------------------')
+                logger.info('---------- BINGO!!! ----------')
+                logger.info(f'PROXY({proto.name}): {name_str}')
+                logger.info('------------------------------')
             else:
-                print(f'PROXY({proto.name}): {name_str}')
+                logger.info(f'PROXY({proto.name}): {name_str}')
             # stop locations
             if any(v in name_str for v in STOP_LOCATIONS):
+                logger.info('FOUND!!!')
                 raise ValueError('Done!!!')
 
     def as_str(self, *, include_geolocation: bool) -> str:

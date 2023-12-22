@@ -19,7 +19,7 @@ from typing import (
     TypeVar,
     Union,
 )
-from urllib.parse import urlparse
+# from urllib.parse import urlparse
 from datetime import datetime
 
 
@@ -39,6 +39,7 @@ from . import sort, validators
 from .folder import Folder
 from .null_context import AsyncNullContext
 from .proxy import HEADERS, Proxy
+from .helpers import parse_tunnels_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class ProxyScraperChecker:
         sort_by_speed: bool,
         save_path: Path,
         folders: Iterable[Folder],
-        tunnels: Optional[Iterable[str]],
+        tunnels: Optional[Iterable[Dict]],
         tunnels_def_user: Optional[str],
         tunnels_def_pass: Optional[str],
         sources: Dict[ProxyType, Optional[str]],
@@ -132,12 +133,19 @@ class ProxyScraperChecker:
                 asyncio.Semaphore(max_tunnels) if max_tunnels else AsyncNullContext()
             )
             for tunnel in tunnels:
-                url = urlparse(tunnel)
+                # url = urlparse(tunnel)
+                # self.tunnels.append((
+                #     ProxyInfo(proxy_type=ProxyType[url.scheme.upper()],
+                #               host=url.hostname, port=url.port,
+                #               username=url.username or tunnels_def_user,
+                #               password=url.password or tunnels_def_pass),
+                #     asyncio.Semaphore(max_conn),
+                # ))
                 self.tunnels.append((
-                    ProxyInfo(proxy_type=ProxyType[url.scheme.upper()],
-                              host=url.hostname, port=url.port,
-                              username=url.username or tunnels_def_user,
-                              password=url.password or tunnels_def_pass),
+                    ProxyInfo(proxy_type=ProxyType["SOCKS5"],
+                              host=tunnel["proxy_address"], port=tunnel["ports"]["socks5"],
+                              username=tunnel["username"] or tunnels_def_user,
+                              password=tunnel["password"] or tunnels_def_pass),
                     asyncio.Semaphore(max_conn),
                 ))
             shuffle(self.tunnels)
@@ -230,7 +238,7 @@ class ProxyScraperChecker:
                     for_geolocation=True,
                 ),
             ),
-            tunnels=tunnels.get("Addresses").strip().splitlines() if tunnels.getboolean("Enabled", True) else [],
+            tunnels=parse_tunnels_from_file(tunnels.get("FileName")) if tunnels.getboolean("Enabled", True) else [],
             tunnels_def_user=tunnels.get("DefaultUser") if tunnels.getboolean("Enabled", True) else None,
             tunnels_def_pass=tunnels.get("DefaultPassword") if tunnels.getboolean("Enabled", True) else None,
             sources={
@@ -269,11 +277,11 @@ class ProxyScraperChecker:
         """
         check_mode = False
         try:
-            print(source)
+            logger.info(source)
             if source.startswith('host:'):
                 text = ''
                 host_parts = source.split(':')
-                print(host_parts)
+                logger.info(host_parts)
                 port_from = int(host_parts[2]) if len(host_parts) > 2 else 1000
                 port_to = int(host_parts[3]) if len(host_parts) > 3 else (port_from + 1 if port_from > 1000 else 65535)
                 if port_to == port_from:
@@ -283,7 +291,7 @@ class ProxyScraperChecker:
             elif source.startswith('check:'):
                 text = ''
                 host_parts = source.split(':')
-                print(host_parts)
+                logger.info(host_parts)
                 for i in range(1, len(self.tunnels)):
                     text += f'{host_parts[1]}:{host_parts[2]}\n'
                 check_mode = True
@@ -411,6 +419,7 @@ class ProxyScraperChecker:
         }
 
     async def check_all_proxies(self, progress: Progress) -> None:
+        logger.info('')
         tasks = {
             proto: progress.add_task(
                 f"[yellow]Checker [red]:: [green]{proto.name}",
@@ -427,6 +436,7 @@ class ProxyScraperChecker:
         ]
         shuffle(coroutines)
         await asyncio.gather(*coroutines)
+        logger.info('')
 
     def save_proxies(self) -> None:
         """Delete old proxies and save new ones."""
@@ -452,7 +462,7 @@ class ProxyScraperChecker:
 
     async def run(self) -> None:
         start_time = datetime.now()
-        print(start_time)
+        logger.info(start_time)
         with self._get_progress_bar() as progress:
             await self.fetch_all_sources(progress)
             await self.check_all_proxies(progress)

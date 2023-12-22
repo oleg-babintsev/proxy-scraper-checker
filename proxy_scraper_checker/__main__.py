@@ -4,13 +4,17 @@ import asyncio
 import logging
 import sys
 from configparser import ConfigParser
+from datetime import datetime, timezone
 
-import rich.traceback
+# import rich.traceback
 from rich.console import Console
 from rich.logging import RichHandler
 
 from .proxy_scraper_checker import ProxyScraperChecker
 from . import proxy
+
+
+CONFIG_PATH = "../proxy-scraper-checker-configs"
 
 
 def set_event_loop_policy() -> None:
@@ -30,11 +34,15 @@ def set_event_loop_policy() -> None:
 
 def configure_logging(console: Console, *, debug: bool) -> None:
     # rich.traceback.install(console=console)
+    timestamp = datetime.now().astimezone(timezone.utc).strftime('%Y%m%d-%H%M%S')
+    file_handler = logging.FileHandler(f'{CONFIG_PATH}/scan_logs/{timestamp}.log')
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
         format="%(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=(
+            file_handler,
             RichHandler(
                 console=console,
                 omit_repeated_times=False,
@@ -53,14 +61,14 @@ def get_config(file: str) -> ConfigParser:
 
 
 async def main() -> None:
-    path = "../proxy-scraper-checker-configs"
     config_file = "config.ini"
     if len(sys.argv) > 1:
         config_file = f"config_{sys.argv[1]}.ini"
-    cfg = get_config(f"{path}/{config_file}")
+    cfg = get_config(f"{CONFIG_PATH}/{config_file}")
 
     console = Console()
     configure_logging(console, debug=cfg["General"].getboolean("Debug", False))
+    logging.getLogger(__name__).info(f"Config: {config_file}")
 
     general = cfg["General"]
     proxy.STOP_LOCATIONS = tuple([v.strip() for v in (general.get("StopLocations") or "").splitlines() if v])
