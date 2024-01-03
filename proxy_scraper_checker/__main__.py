@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import atexit
 from configparser import ConfigParser
 from datetime import datetime, timezone
 
@@ -77,6 +78,13 @@ async def main() -> None:
     await ProxyScraperChecker.from_configparser(cfg, console=console).run()
 
 
+def goodbye():
+    logging.getLogger(__name__).info(f"Exit time: {datetime.now()}")
+
+
 if __name__ == "__main__":
+    # register a function to be executed at termination
+    atexit.register(goodbye)
+    # start main
     set_event_loop_policy()
     asyncio.run(main())
